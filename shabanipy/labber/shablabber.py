@@ -36,15 +36,15 @@ class ShaBlabberFile(File):
         `path`.
         """
         p = Path(path).expanduser()
-        root = get_data_dir()
         if not p.is_absolute():
+            root = get_data_dir()
             p = root / path
-        if not p.exists():
-            print(f"Searching for {path} in {root}...")
-            try:
-                p = next(root.rglob(path))
-            except StopIteration as e:
-                raise ValueError(f"Can't find {path} in {root}") from e
+            if not p.exists():
+                print(f"Searching for {path} in {root}...")
+                try:
+                    p = next(root.rglob(path))
+                except StopIteration as e:
+                    raise ValueError(f"Can't find {path} in {root}") from e
         self.path = p
         super().__init__(str(p), "r")
 
@@ -58,6 +58,11 @@ class ShaBlabberFile(File):
         """The date and time the hdf5 file was created."""
         return datetime.fromtimestamp(self.attrs["creation_time"])
 
+    @cached_property
+    def _completed(self) -> bool:
+        """Did the scan finish, or was it aborted or crashed."""
+        return self["Data"].attrs["Completed"]
+
     @property
     def _step_dims(self) -> Tuple[int]:
         """Step dimensions, i.e. number of points for each step channel."""
@@ -66,9 +71,15 @@ class ShaBlabberFile(File):
     @cached_property
     def _shape(self) -> Tuple[int]:
         """The shape of the data."""
-        data_shape = [dim for dim in self["Data/Data"].shape if dim != 1]
-        del data_shape[1]  # number of channels
-        return self._trace_dims + tuple(data_shape)
+        step_dims = [d for d in self._step_dims if d != 1]
+        if self._completed:
+            return self._trace_dims + tuple(step_dims)
+        else:  # scan aborted/crashed/interrupted
+            # infer the last dimension from the available data
+            data_shape = list(self["Data/Data"].shape)
+            del data_shape[1]  # number of channels/columns
+            step_dims[-1] = np.prod(data_shape) // np.prod(step_dims[:-1])
+            return self._trace_dims + tuple(step_dims)
 
     @property
     def comment(self) -> str:

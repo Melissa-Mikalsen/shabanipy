@@ -14,8 +14,7 @@ from shabanipy.jj import (
     symmetrize_fraunhofer,
 )
 from shabanipy.labber import ShaBlabberFile
-from shabanipy.utils import load_config
-from shabanipy.utils.plotting import jy_pink, plot, plot2d
+from shabanipy.utils import get_output_dir, jy_pink, load_config, plot, plot2d
 
 print = partial(print, flush=True)
 
@@ -28,10 +27,16 @@ parser.add_argument(
 )
 parser.add_argument("config_section", help="section of the .ini config file to use")
 parser.add_argument(
-    "--width", "-w", type=float, help="junction width (m)",
+    "--width",
+    "-w",
+    type=float,
+    help="junction width (m)",
 )
 parser.add_argument(
-    "--length", "-l", type=float, help="junction length (m)",
+    "--length",
+    "-l",
+    type=float,
+    help="junction length (m)",
 )
 parser.add_argument(
     "--center",
@@ -61,13 +66,16 @@ if LENGTH is None:
     )
 
 # output
-OUTDIR = "./output/"
-print(f"Output directory: `{OUTDIR}`")
-Path(OUTDIR).mkdir(parents=True, exist_ok=True)
+outdir = get_output_dir() / "current-reconstruction"
+print(f"Output directory: {outdir}")
+outdirvv = outdir / Path(args.config_path).stem
+outdirvv.mkdir(parents=True, exist_ok=True)
 SLICE_STR = (
     f"_idx={config.getfloat('3RD_AXIS_INDEX')}" if "3RD_AXIS_INDEX" in config else ""
 )
-OUTPATH = Path(OUTDIR) / f"{config['FILENAME']}{SLICE_STR}_current-reconstruction"
+datapath = Path(config["DATAPATH"])
+outpath = outdir / f"{datapath.stem}{SLICE_STR}"
+outpathvv = outdirvv / f"{datapath.stem}{SLICE_STR}"
 jy_pink.register()
 plt.style.use(["jy_pink", "fullscreen13"])
 
@@ -83,18 +91,18 @@ if config.getfloat("FIELD_MAX"):
     filters.append((config["CH_FIELD_PERP"], np.less, config.getfloat("FIELD_MAX")))
 
 # load the data
-with ShaBlabberFile(config["DATAPATH"]) as f:
+with ShaBlabberFile(datapath) as f:
     bfield, ibias, dvdi = f.get_data(
         config["CH_FIELD_PERP"],
         config["CH_BIAS"],
-        config["CH_MEASURE"],
+        config["CH_MEAS"],
         order=(config["CH_FIELD_PERP"], config["CH_BIAS"]),
         slices=SLICES,
         filters=filters,
     )
     if f.get_channel(config["CH_BIAS"]).unitPhys == "V":
         ibias /= config.getfloat("R_DC_OUT")
-    ibias_ac = f.get_channel(config["CH_MEASURE"]).instrument.config[
+    ibias_ac = f.get_channel(config["CH_MEAS"]).instrument.config[
         "Output amplitude"
     ] / config.getfloat("R_AC_OUT")
     dvdi = np.abs(dvdi) / ibias_ac
@@ -114,21 +122,21 @@ fig, ax = plot2d(
     ylabel="dc bias (μA)",
     zlabel="dV/dI (Ω)",
     title="raw data",
-    stamp=config["COOLDOWN"] + "_" + config["SCAN"],
+    stamp=datapath.stem,
 )
-fig.savefig(str(OUTPATH) + "_raw-data.png")
+fig.savefig(str(outpathvv) + "_raw-data.png")
 
 # extract the switching current
 bfield = np.unique(bfield)  # assumes all field sweeps are identical
 ic = extract_switching_current(
     ibias,
     dvdi,
-    threshold=config.getfloat("RESISTANCE_THRESHOLD", fallback=None),
+    threshold=config.getfloat("THRESHOLD", fallback=None),
     interp=True,
 )
 ax.set_title("switching current")
 plot(bfield / 1e-3, ic / 1e-6, ax=ax, color="k", lw=1)
-fig.savefig(str(OUTPATH) + "_ic-extraction.png")
+fig.savefig(str(outpathvv) + "_ic-extraction.png")
 
 if args.center:
     bfield = recenter_fraunhofer(bfield, ic)
@@ -141,9 +149,9 @@ if args.center:
         xlabel="magnetic field (mT)",
         ylabel="critical current (μA)",
         title="centered fraunhofer",
-        stamp=config["COOLDOWN"] + "_" + config["SCAN"],
+        stamp=datapath.stem,
     )
-    fig.savefig(str(OUTPATH) + "_centered.png")
+    fig.savefig(str(outpathvv) + "_centered.png")
 
 if args.symmetrize:
     bfield, ic = symmetrize_fraunhofer(bfield, ic)
@@ -156,9 +164,9 @@ if args.symmetrize:
         xlabel="magnetic field (mT)",
         ylabel="critical current (μA)",
         title="symmetrized fraunhofer",
-        stamp=config["COOLDOWN"] + "_" + config["SCAN"],
+        stamp=datapath.stem,
     )
-    fig.savefig(str(OUTPATH) + "_symmetrized.png")
+    fig.savefig(str(outpathvv) + "_symmetrized.png")
 
 PHI0 = physical_constants["mag. flux quantum"][0]
 FIELD_TO_WAVENUM = 2 * np.pi * LENGTH / PHI0
@@ -170,6 +178,6 @@ ax.axhline(0, color="k")
 ax.plot(x * 1e6, jx)
 ax.fill_between(x * 1e6, jx, alpha=0.5)
 plt.show()
-fig.savefig(str(OUTPATH) + "_current-density.png")
+fig.savefig(str(outpath) + "_current-density.png")
 
 plt.show()
